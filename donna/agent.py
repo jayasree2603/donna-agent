@@ -19,27 +19,33 @@ from google.adk.models.lite_llm import LiteLlm
 from google.adk.runners import Runner
 from google.genai import types
 from .config import TEMPLATES_DIR, RESULTS_DIR, MAX_FILENAME_LENGTH, FORBIDDEN_CHARS, ALLOWED_EXTENSIONS
-
+from .langfuse_config import (
+    LangfuseSessionTracer,
+    trace_tool,
+    trace_validation,
+    track_error
+)
+ 
 load_dotenv()
 
 # ============================================================================
 # VALIDATION FUNCTIONS
 # ============================================================================
-
+@trace_validation
 def validate_email(email: str) -> Tuple[bool, Optional[str]]:
     email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     if not re.match(email_pattern, email):
         return False, "Invalid email format. Please use format: example@domain.com"
     return True, None
 
-
+@trace_validation
 def validate_phone(phone: str) -> Tuple[bool, Optional[str]]:
     cleaned = re.sub(r'[\s\-\(\)\.+]', '', phone)
     if not cleaned.isdigit() or len(cleaned) < 7 or len(cleaned) > 15:
         return False, "Invalid phone number. Please use a valid phone format (7-15 digits)"
     return True, None
 
-
+@trace_validation
 def validate_and_normalize_date(date_str: str) -> Tuple[bool, Optional[str], Optional[str]]:
     date_str = date_str.strip()
     accepted_formats = [
@@ -54,7 +60,7 @@ def validate_and_normalize_date(date_str: str) -> Tuple[bool, Optional[str], Opt
             continue
     return False, "Invalid date. Please use format: DD/MM/YYYY", None
 
-
+@trace_validation
 def validate_input_by_type(variable_name: str, value: str) -> Tuple[bool, Optional[str], Optional[str]]:
     if not value or not value.strip():
         return False, f"{variable_name} cannot be empty", None
@@ -91,23 +97,23 @@ def sanitize_filename(filename: str) -> str:
 # ============================================================================
 # TOOL FUNCTIONS
 # ============================================================================
+@trace_tool
+# def list_available_templates(directory_path: str = TEMPLATES_DIR) -> dict:
+#     if not os.path.isdir(directory_path):
+#         return {"success": False, "error": f"Template directory not found: {directory_path}", "message": "Template directory not found."}
+#     try:
+#         templates = []
+#         for filename in os.listdir(directory_path):
+#             if filename.endswith("_template.docx"):
+#                 friendly_name = filename.replace("_template.docx", "").replace("_", " ")
+#                 templates.append({"name": friendly_name, "filename": filename, "path": os.path.join(directory_path, filename)})
+#         if not templates:
+#             return {"success": False, "error": "No templates found", "message": f"No templates found in {directory_path}."}
+#         return {"success": True, "templates": templates, "count": len(templates), "message": f"Found {len(templates)} templates."}
+#     except Exception as e:
+#         return {"success": False, "error": str(e), "message": f"Error reading templates directory: {str(e)}"}
 
-def list_available_templates(directory_path: str = TEMPLATES_DIR) -> dict:
-    if not os.path.isdir(directory_path):
-        return {"success": False, "error": f"Template directory not found: {directory_path}", "message": "Template directory not found."}
-    try:
-        templates = []
-        for filename in os.listdir(directory_path):
-            if filename.endswith("_template.docx"):
-                friendly_name = filename.replace("_template.docx", "").replace("_", " ")
-                templates.append({"name": friendly_name, "filename": filename, "path": os.path.join(directory_path, filename)})
-        if not templates:
-            return {"success": False, "error": "No templates found", "message": f"No templates found in {directory_path}."}
-        return {"success": True, "templates": templates, "count": len(templates), "message": f"Found {len(templates)} templates."}
-    except Exception as e:
-        return {"success": False, "error": str(e), "message": f"Error reading templates directory: {str(e)}"}
-
-
+@trace_tool
 def find_template(user_query: str, directory_path: str = TEMPLATES_DIR) -> dict:
     # Ensure fallback if empty string is passed
     if not directory_path:
@@ -175,8 +181,8 @@ def find_template(user_query: str, directory_path: str = TEMPLATES_DIR) -> dict:
         "error": "No matching template found"
     }
 
-
-def get_template_variables(template_path: str) -> dict:
+@trace_tool
+def get_variables(template_path: str) -> dict:
     if not os.path.exists(template_path):
         return {"success": False, "error": f"Template file not found: {template_path}", "message": "Template file not found."}
     try:
@@ -195,12 +201,8 @@ def get_template_variables(template_path: str) -> dict:
         return {"success": False, "error": str(e), "message": f"Error reading template file: {str(e)}"}
 
 
-def validate_variable_value(variable_name: str, value: str) -> dict:
-    is_valid, error_msg, normalized_value = validate_input_by_type(variable_name, value)
-    return {"success": is_valid, "variable_name": variable_name, "original_value": value, "normalized_value": normalized_value if is_valid else value, "error": error_msg if not is_valid else None, "message": "Valid" if is_valid else error_msg}
-
-
-def generate_document(template_path: str, variables_json: str) -> dict:
+@trace_tool
+def fill_template(template_path: str, variables_json: str) -> dict:
     try:
         variables = json.loads(variables_json)
         if not os.path.exists(template_path):
@@ -251,11 +253,11 @@ def generate_document(template_path: str, variables_json: str) -> dict:
 # TOOL DEFINITIONS
 # ============================================================================
 
-list_templates_tool = FunctionTool(list_available_templates)
+#list_templates_tool = FunctionTool(list_available_templates)
 find_template_tool = FunctionTool(find_template)
-get_variables_tool = FunctionTool(get_template_variables)
-validate_value_tool = FunctionTool(validate_variable_value)
-generate_doc_tool = FunctionTool(generate_document)
+get_variables_tool = FunctionTool(get_variables)
+#validate_value_tool = FunctionTool(validate_variable_value)
+fill_template_tool = FunctionTool(fill_template)
 # ============================================================================
 # AGENT SETUP
 # ============================================================================
@@ -309,11 +311,11 @@ root_agent = Agent(
     name="Donna",
     model=model,
     tools=[
-        list_templates_tool,
+        #list_templates_tool,
         find_template_tool,
         get_variables_tool,
-        validate_value_tool,
-        generate_doc_tool
+        #validate_value_tool,
+        fill_template_tool
     ],
     instruction=instruction
 )
@@ -338,76 +340,86 @@ runner = Runner(
 # ============================================================================
 
 async def run_donna_assistant():
-    """Main async loop for the Donna assistant."""
+    """Main async loop for the Donna assistant with Langfuse tracing."""
     print("=" * 60)
     print("Donna - HR Document Assistant (Google ADK)")
     print("=" * 60)
     print("Type 'quit', 'exit', or 'bye' to end the session.")
     print("Type 'reset' to start a new conversation.\n")
     
-    # Create session
+    # Create initial session
     session = await session_service.create_session(
         app_name=APP_NAME,
         user_id=USER_ID,
         state={}
     )
     session_id = session.id
-    
+
     print("Agent: Hello! I'm Donna, your HR Document Assistant.")
     print("       I can help you create various HR documents.")
     print("       What document would you like to create today?\n")
     
-    while True:
-        try:
-            user_input = await asyncio.to_thread(input, "You: ")
-        except (EOFError, KeyboardInterrupt):
-            print("\n\nGoodbye! Have a great day!")
-            break
-        
-        if not user_input.strip():
-            continue
-        
-        if user_input.lower() in ['quit', 'exit', 'bye']:
-            print("\nAgent: Goodbye! Have a great day!")
-            break
-        
-        if user_input.lower() == 'reset':
-            # Create new session
-            session = await session_service.create_session(
-                app_name=APP_NAME,
-                user_id=USER_ID,
-                state={}
-            )
-            session_id = session.id
-            print("\nAgent: Conversation reset. What document would you like to create?\n")
-            continue
-        
-        print("Agent: ", end="", flush=True)
-        
-        # Create content message
-        content = types.Content(
-            role='user',
-            parts=[types.Part(text=user_input)]
-        )
-        
-        # Stream the response
-        try:
-            for event in runner.run(
-                user_id=USER_ID,
-                session_id=session_id,
-                new_message=content
-            ):
-                if event.content and event.content.parts:
-                    for part in event.content.parts:
-                        if hasattr(part, 'text') and part.text:
-                            print(part.text, end="", flush=True)
-            print()  # Newline after response
-        except KeyboardInterrupt:
-            print("\n\nInterrupted. Goodbye!")
-            break
-        except Exception as e:
-            print(f"\nAn error occurred: {str(e)}")
-            print("Let's try again. What would you like to do?\n")
+    # Start Langfuse session tracing
+    with LangfuseSessionTracer(APP_NAME, USER_ID, session_id) as session_tracer:
+        while True:
+            try:
+                user_input = await asyncio.to_thread(input, "You: ")
+            except (EOFError, KeyboardInterrupt):
+                print("\n\nGoodbye! Have a great day!")
+                break
+
+            if not user_input.strip():
+                continue
+
+            if user_input.lower() in ['quit', 'exit', 'bye']:
+                print("\nAgent: Goodbye! Have a great day!")
+                break
+
+            if user_input.lower() == 'reset':
+                # Create new session
+                session = await session_service.create_session(
+                    app_name=APP_NAME,
+                    user_id=USER_ID,
+                    state={}
+                )
+                session_id = session.id
+                print("\nAgent: Conversation reset. What document would you like to create?\n")
+                continue
+
+            # Start tracing this conversation turn
+            event_tracer = session_tracer.get_event_tracer()
+            event_tracer.start_turn(user_input)
+
+            print("Agent: ", end="", flush=True)
+            
+            try:
+                # Run agent and stream response
+                response_text = ""
+                content = types.Content(role='user', parts=[types.Part(text=user_input)])
+                for event in runner.run(
+                    user_id=USER_ID,
+                    session_id=session_id,
+                    new_message=content
+                ):
+                    if event.content and event.content.parts:
+                        for part in event.content.parts:
+                            if hasattr(part, 'text') and part.text:
+                                print(part.text, end="", flush=True)
+                                response_text += part.text
+                print()  # newline
+
+                # End turn tracing
+                event_tracer.end_turn(response_text)
+                session_tracer.increment_turn()
+
+            except KeyboardInterrupt:
+                print("\n\nInterrupted. Goodbye!")
+                break
+            except Exception as e:
+                track_error(e, {"user_input": user_input})
+                print(f"\nAn error occurred: {str(e)}")
+                print("Let's try again. What would you like to do?\n")
+
 
 
 # ============================================================================
